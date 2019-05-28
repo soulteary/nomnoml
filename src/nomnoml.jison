@@ -1,58 +1,74 @@
+%{
+  var cons = (list, e) => (list.push(e), list)
+  var last = (list) => (list[list.length-1])
+  var Rel = (start, assoc, end)  => {
+    var t = assoc.match('^(.*?)([<:o+]*[-_]/?[-_]*[:o+>]*)(.*)$');
+    return {assoc:t[2], start, end, startLabel:t[1].trim(), endLabel:t[3].trim()};
+  }
+  var Part = (lines, nodes, rels)  => ({lines, nodes, rels})
+  var Node = (type, name, parts)  => ({type, name, parts})
+  function withRelTo(part, assoc, node) {
+    part.rels.push(Rel(last(part.rels).end, assoc, node.name));
+    part.nodes.push(node);
+    return part;
+  }
+%}
+
 %lex
 %%
 
-\s*\|\s*                          return '|'
-(\\(\[|\]|\|)|[^\]\[|;\n])+       return 'IDENT'
-"["                               return '['
-\s*\]                             return ']'
-[ ]*(\;|\n)+[ ]*                  return 'SEP'
-<<EOF>>                           return 'EOF'
-.                                 return 'INVALID'
-
+"|"                            return '|'
+"\\\\"                         return 'LITERAL'
+"\["                           return 'LITERAL'
+"\]"                           return 'LITERAL'
+"\|"                           return 'LITERAL'
+"\;"                           return 'LITERAL'
+"\;"                           return 'LITERAL'
+"["                            return '['
+"]"                            return ']'
+[;\n]+                         return 'SEP'
+\<[a-zA-Z]+\>                  return 'TYPE'
+[^\[\];|\n]*[^\[\];|\n\\]      return 'TXT'
+\\s*                           return 'WS'
+<<EOF>>                        return 'EOF'
+.                              return 'INVALID'
 /lex
 
 %start root
 
-%% /* ------------------------------------------------- */
+%%
 
 root
-    : compartment EOF      { return $1 }
-    | SEP compartment EOF  { return $2 }
-    | SEP compartment SEP EOF { return $2 }
-    | compartment SEP EOF  { return $1 };
+ : part EOF             { return $1 }
+;
 
-slot
-  : IDENT                  {$$ = $1.trim().replace(/\\(\[|\]|\|)/g, '$'+'1');}
-  | class                  {$$ = $1;}
-  | association            {$$ = $1;};
+text
+ : LITERAL              -> $LITERAL.substr(1)
+ | TXT                  -> $TXT
+ | text LITERAL         -> $text + $LITERAL.substr(1)
+ | text TXT             -> $text + $TXT
+;
 
-compartment
-  : slot                   {$$ = [$1];}
-  | compartment SEP slot   {$$ = $1.concat($3);};
+part
+ : rels                 -> $rels
+ | node                 -> Part([], [$node], [])
+ | text                 -> Part([$text], [], [])
+ | part SEP rels        -> cons($part.rels, $rels) && $part
+ | part SEP node        -> cons($part.nodes, $node) && $part
+ | part SEP text        -> cons($part.lines, $text) && $part
+;
+
+rels
+ : rels text node       -> withRelTo($rels, $text, $node)
+ | node text node       -> Part([], [$1,$2], [Rel($1.name,$2,$3.name)])
+;
 
 parts
-  : compartment            {$$ = [$1];}
-  | parts '|' compartment  {$$ = $1.concat([$3]);}
-  | parts '|'              {$$ = $1.concat([[]]);};
+ : part                 -> [$part]
+ | parts '|' part       -> cons($parts, $part)
+;
 
-association
-  : class IDENT class      {
-           var t = $2.trim().replace(/\\(\[|\]|\|)/g, '$'+'1').match('^(.*?)([<:o+]*[-_]/?[-_]*[:o+>]*)(.*)$');
-           if (!t) {
-             throw new Error('line '+@3.first_line+': Classifiers must be separated by a relation or a line break')
-           }
-           $$ = {assoc:t[2], start:$1, end:$3, startLabel:t[1].trim(), endLabel:t[3].trim()};
-  };
-
-class
-  : '[' parts ']'          {
-           var type = 'CLASS';
-           var id = $2[0][0];
-           var typeMatch = $2[0][0].match('<([a-z]*)>(.*)');
-           if (typeMatch) {
-               type = typeMatch[1].toUpperCase();
-               id = typeMatch[2].trim();
-           }
-           $2[0][0] = id;
-           $$ = {type:type, id:id, parts:$2};
-  };
+node
+ : '[' parts ']'        -> Node('<class>', $parts[0].lines[0], $parts)
+ | '[' TYPE parts ']'   -> Node($TYPE, $parts[0].lines[0], $parts)
+;
