@@ -1,14 +1,23 @@
 %{
+  var join = (list, list2) => (list.push(...list2), list)
   var cons = (list, e) => (list.push(e), list)
   var last = (list) => (list[list.length-1])
-  var Rel = (start, assoc, end)  => {
-    var t = assoc.match('^(.*?)([<:o+]*[-_]/?[-_]*[:o+>]*)(.*)$');
-    return {assoc:t[2], start, end, startLabel:t[1].trim(), endLabel:t[3].trim()};
+  var Rel = (start, arrow, end)  => {
+    var assoc = arrow.assoc
+    var startLabel = arrow.startLabel
+    var endLabel = arrow.endLabel
+    return {assoc, start, end, startLabel, endLabel};
   }
-  var Part = (lines, nodes, rels)  => ({lines, nodes, rels})
+  var Partition = (lines, nodes, rels)  => ({lines, nodes, rels})
   var Node = (type, name, parts)  => ({type, name, parts})
-  function withRelTo(part, assoc, node) {
-    part.rels.push(Rel(last(part.rels).end, assoc, node.name));
+  function withRelTo(part, arrow, node) {
+    part.rels.push({
+      assoc: arrow.assoc,
+      start: last(part.rels).end,
+      end: node.name,
+      startLabel: arrow.startLabel.trim(),
+      endLabel: arrow.endLabel.trim()
+    });
     part.nodes.push(node);
     return part;
   }
@@ -17,19 +26,24 @@
 %lex
 %%
 
-"|"                            return '|'
+[ \n\t]*\|[ \n\t]*             return '|'
 "\\\\"                         return 'LITERAL'
 "\["                           return 'LITERAL'
 "\]"                           return 'LITERAL'
 "\|"                           return 'LITERAL'
 "\;"                           return 'LITERAL'
 "\;"                           return 'LITERAL'
-"["                            return '['
-"]"                            return ']'
-[;\n]+                         return 'SEP'
+"\<"                           return 'LITERAL'
+"\>"                           return 'LITERAL'
+"\-"                           return 'LITERAL'
+"\+"                           return 'LITERAL'
 \<[a-zA-Z]+\>                  return 'TYPE'
-[^\[\];|\n]*[^\[\];|\n\\]      return 'TXT'
-\\s*                           return 'WS'
+[<>+:_-]+                      return 'ARROW'
+[^\[\]|;\n<>+:_-]              return 'TXT'
+"["                            return '['
+\n*\]                          return ']'
+[ ]*[;\n]+[ ]*                 return 'SEP'
+\\s*                           ;
 <<EOF>>                        return 'EOF'
 .                              return 'INVALID'
 /lex
@@ -38,9 +52,7 @@
 
 %%
 
-root
- : part EOF             { return $1 }
-;
+root : partition EOF { return $partition };
 
 text
  : LITERAL              -> $LITERAL.substr(1)
@@ -49,23 +61,30 @@ text
  | text TXT             -> $text + $TXT
 ;
 
-part
- : rels                 -> $rels
- | node                 -> Part([], [$node], [])
- | text                 -> Part([$text], [], [])
- | part SEP rels        -> cons($part.rels, $rels) && $part
- | part SEP node        -> cons($part.nodes, $node) && $part
- | part SEP text        -> cons($part.lines, $text) && $part
+partition
+ : chain                -> $1
+ | node                 -> Partition([], [$1], [])
+ | text                 -> Partition([$1], [], [])
+ | partition SEP chain  -> join($partition.rels, $chain.rels) && join($partition.nodes, $chain.nodes) && $partition
+ | partition SEP node   -> cons($partition.nodes, $node) && $partition
+ | partition SEP text   -> cons($partition.lines, $text) && $partition
 ;
 
-rels
- : rels text node       -> withRelTo($rels, $text, $node)
- | node text node       -> Part([], [$1,$2], [Rel($1.name,$2,$3.name)])
+arrow
+ : ARROW                -> { startLabel: '', assoc: $ARROW, endLabel: '' }
+ | text ARROW           -> { startLabel: $text, assoc: $ARROW, endLabel: '' }
+ | ARROW text           -> { startLabel: '', assoc: $ARROW, endLabel: $text }
+ | text ARROW text      -> { startLabel: $1, assoc: $ARROW, endLabel: $3 }
+;
+
+chain
+ : chain arrow node     -> withRelTo($chain, $arrow, $node)
+ | node arrow node      -> Partition([], [$1,$3], [Rel($1.name,$arrow,$3.name)])
 ;
 
 parts
- : part                 -> [$part]
- | parts '|' part       -> cons($parts, $part)
+ : partition            -> [$partition]
+ | parts '|' partition  -> cons($parts, $partition)
 ;
 
 node
