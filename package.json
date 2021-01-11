@@ -42,6 +42,7 @@
   },
   "scripts": {
     "build": "npm run lib && npm run webapp && npm run test",
+    "postbuild": "node post-build.js",
     "webapp": "rollup -c webapp/rollup.config.js",
     "lib": "tsc --build src/tsconfig.json && node build/build.js",
     "test": "node test/test.js && npm run test_cli",
